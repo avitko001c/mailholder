@@ -2,6 +2,7 @@ import os, re, sys, django, email
 from io import BytesIO
 from itertools import count
 from smtpd import SMTPServer
+from aiosmtpd.controller import Controller
 from playhouse.dataset import DataSet
 
 db = DataSet('sqlite:///memory:')
@@ -59,8 +60,7 @@ class MessagePart(object):
                     continue
                 out['Content']['MultiPart' + str(num)]['Content'] = payload._payload
                 num += 1
-            goout = BytesIO(str(out).encode())
-            return out, json.loads(goout)
+            return out
         else:
             out['Content'] = self.msg._payload
             print(type(out))
@@ -70,14 +70,7 @@ class MessagePart(object):
     def saveHeaders(self):
         headers = db['headers']
         for header in self.msg.keys():
-            headers[header] = self.msg.get(header, '')
-            return headers
-        if names:
-            for name in names:
-                headers[name] = self.msg.get(name, '')
-            return headers
-        for header in self.msg.keys():
-           headers[header] = self.msg.get(header, '')
+            headers.insert(self.msg.get(header, ''))
         return headers
 
     def saveAttachments(self, path):
@@ -243,4 +236,29 @@ class LocalServer(SMTPServer):
         filename = filename_re.match
         #print(message.items())
         #print('------------ END MESSAGE ------------')
+
+class LocalHandler:
+    async def handle_DATA(self, server, session, envelope, **kwargs):
+        print(type(envelope.content))
+        #print(data)
+        msg_data = BytesIO(envelope.content)
+        flags = []
+        date = email.utils.formatdate()
+        msg = LocalMessage(msg_data, flags, date)
+        #msg.msg.add_header('X-peer:', peer[0])
+        print(msg.msg)
+        #print(mailfrom, rcpttos)
+        #print('Downloading Attachment')
+        #msg.getAttachment('/tmp')
+        print('---------- MESSAGE FOLLOWS ----------')
+        if kwargs:
+            if kwargs.get('mail_options'):
+                print('mail options: %s' % kwargs['mail_options'])
+            if kwargs.get('rcpt_options'):
+                print('rcpt options: %s\n' % kwargs['rcpt_options'])
+        #print(msg.getBodyFile().read())
+        filename = filename_re.match
+        #print(message.items())
+        print('------------ END MESSAGE ------------')
+        return '250 OK'
 
