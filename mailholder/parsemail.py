@@ -76,7 +76,6 @@ class MessagePart(object):
     def saveAttachments(self, path):
         if not os.path.exists(path):
             raise NotADirectoryError('Path {0} does not exist'.format(path))
-        outfiles = []
         for part in self.msg.walk():
             if part.is_multipart():
                 continue
@@ -93,7 +92,7 @@ class MessagePart(object):
                 subject = self.msg.get('Subject', '')
                 print('Downloaded {0} from email with Subject: {1} into {2}'.format(fileName, subject, path))
                 outfile.write(part.get_payload(decode=True))
-        return outfiles
+        return []
 
 
     def getBodyFile(self, decode=False):

@@ -127,7 +127,7 @@ def validate_email_with_name(value):
     value = force_text(value)
 
     recipient = value
-    if '<' and '>' in value:
+    if '>' in recipient:
         start = value.find('<') + 1
         end = value.find('>')
         if start < end:
@@ -212,10 +212,7 @@ class ExtractEmails:
     def __init__(self, url: str, depth: int=None, print_log: bool=False, ssl_verify: bool=True, user_agent: str=None, request_delay: float=0):
         self.delay = request_delay
         self.verify = ssl_verify
-        if url.endswith('/'):
-            self.url = url[:-1]
-        else:
-            self.url = url
+        self.url = url[:-1] if url.endswith('/') else url
         self.print_log = print_log
         self.depth = depth
         self.scanned = []

@@ -94,11 +94,7 @@ class MailJson:
             for h_decoded in h:
                 hv = h_decoded[0]
                 h_encoding = h_decoded[1]
-                if h_encoding is None:
-                    h_encoding = "ascii"
-                else:
-                    h_encoding = h_encoding.lower()
-
+                h_encoding = "ascii" if h_encoding is None else h_encoding.lower()
                 hv = str(hv, h_encoding).strip().strip("\t")
 
 
@@ -157,8 +153,7 @@ class MailJson:
             return datetime.datetime.now()
 
         timestamp = email.utils.mktime_tz(tt)
-        date = datetime.datetime.fromtimestamp(timestamp)
-        return date
+        return datetime.datetime.fromtimestamp(timestamp)
 
     def _get_content_charset(self, part, failobj = None):
         """Return the charset parameter of the Content-Type header.
@@ -199,11 +194,7 @@ class MailJson:
             if isinstance(v, bytes):
                 v = self._decode_headers(v)
 
-            if len(v) == 1:
-                headers[k] = v[0]
-            else:
-                headers[k] = v
-
+            headers[k] = v[0] if len(v) == 1 else v
         return headers
 
     def parse(self):
@@ -228,11 +219,7 @@ class MailJson:
             if content_disposition:
                 # we have attachment
                 r = filename_re.findall(content_disposition)
-                if r:
-                    filename = sorted(r[0])[1]
-                else:
-                    filename = "undefined"
-
+                filename = sorted(r[0])[1] if r else "undefined"
                 a = { "filename": filename, "content": base64.b64encode(part.get_payload(decode = True)), "content_type": part.get_content_type() }
                 attachments.append(a)
             else:
