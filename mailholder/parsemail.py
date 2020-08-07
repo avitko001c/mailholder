@@ -38,7 +38,7 @@ begin_space_re = re.compile("^\s{1,}", re.M)
 class MessagePart(object):
 
     def __init__(self, msg):
-        self.msg = msg
+        self.msg = email.message_from_bytes(msg)
         self.string_file = BytesIO()
 
     def to_json(self):
@@ -135,6 +135,17 @@ class MessagePart(object):
             return MessagePart(self.msg.get_payload()[part])
         raise TypeError("Not a multipart message")
 
+    def payloads(self):
+        for part in self.msg.walk():
+            if part.get_content_maintype() == 'multipart':
+                continue
+            payload = part.get_payload(decode=True)
+            enc = self.parse_charset()
+            try:
+                yield payload.decode(enc)
+            except UnicodeDecodeError:
+                yield payload
+
     def parse_charset(self, default='utf8'):
         charset = self.msg.get_charset()
         if charset is not None:
@@ -183,16 +194,6 @@ class LocalMessage(MessagePart):
         h = self.saveHeaders()
         return "<From: %s, To: %s, Uid: %s>" % (h['From'], h['To'], self.uid)
 
-    def payloads(self):
-        for part in self.msg.walk():
-            if part.get_content_maintype() == 'multipart':
-                continue
-            payload = part.get_payload(decode=True)
-            enc = self.parse_charset()
-            try:
-                yield payload.decode(enc)
-            except UnicodeDecodeError:
-                yield payload
 
 
 class LocalServer(SMTPServer):

@@ -15,7 +15,7 @@ class CommaSeparatedEmailField(TextField):
     def formfield(self, **kwargs):
         defaults = {
             'error_messages': {
-                'invalid': _('Only comma separated emails are allowed.'),
+                'invalid': 'Only comma separated emails are allowed.',
             }
         }
         defaults.update(kwargs)
