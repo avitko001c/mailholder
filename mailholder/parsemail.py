@@ -2,10 +2,7 @@ import os, re, sys, django, email
 from io import BytesIO
 from itertools import count
 from smtpd import SMTPServer
-from aiosmtpd.controller import Controller
-from playhouse.dataset import DataSet
 
-db = DataSet('sqlite:///memory:')
 sys.dont_write_bytecode = True
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "settings")
 
@@ -34,12 +31,13 @@ filename_re = re.compile("filename=\"(.+)\"|filename=([^;\n\r\"\']+)", re.I|re.S
 
 begin_tab_re = re.compile("^\t{1,}", re.M)
 begin_space_re = re.compile("^\s{1,}", re.M)
-
+##
 class MessagePart(object):
 
     def __init__(self, msg):
         self.msg = email.message_from_bytes(msg)
         self.string_file = BytesIO()
+        self.container = list()
 
     def to_json(self):
         import json
@@ -76,7 +74,6 @@ class MessagePart(object):
     def saveAttachments(self, path):
         if not os.path.exists(path):
             raise NotADirectoryError('Path {0} does not exist'.format(path))
-        outfiles = []
         for part in self.msg.walk():
             if part.is_multipart():
                 continue
@@ -93,8 +90,6 @@ class MessagePart(object):
                 subject = self.msg.get('Subject', '')
                 print('Downloaded {0} from email with Subject: {1} into {2}'.format(fileName, subject, path))
                 outfile.write(part.get_payload(decode=True))
-        return outfiles
-
 
     def getBodyFile(self, decode=False):
         if self.msg.is_multipart():
@@ -164,7 +159,7 @@ class MessagePart(object):
             decoded_part.decode(codec)
             if codec is not None else decoded_part.decode('ascii')
             for decoded_part, codec in parts)
-
+##
 
 class LocalMessage(MessagePart):
 
