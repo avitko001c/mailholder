@@ -85,11 +85,11 @@ class MemoryIMAPMailbox(object):
         if uid:
             msg_set.last = LAST_UID
             uids = set(msg_set)
-            return dict((i, msg) for i, msg in enumerate(self.msgs)
-                        if msg.uid in uids)
+            return {i: msg for i, msg in enumerate(self.msgs)
+                                if msg.uid in uids}
         else:
             msg_set.last = len(self.msgs)
-            return dict((i, self.msgs[i - 1]) for i in msg_set)
+            return {i: self.msgs[i - 1] for i in msg_set}
 
     def getHierarchicalDelimiter(self):
         return "."
