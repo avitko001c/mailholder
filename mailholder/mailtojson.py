@@ -1,49 +1,145 @@
-#!/usr/bin/env python
+# ---------------------------------------------------------------------
+#  (c) 2013 Newsman App, https://github.com/Newsman/MailToJson
+#  (c) 2015 Mike Andersen, mike@geekpod.net
+#  (c) 2015 Andriy Vitushynskyy, vitush.dev@gmail.com
+#
+#  This code is released under MIT license.
+# ---------------------------------------------------------------------
 
-## Open Sourced by - Newsman App www.newsmanapp.com
-## (c) 2013 Newsman App
-## https://github.com/Newsman/MailToJson
+import re
+import sys
+import datetime
+import email
+import base64
+import chardet
 
-import sys, urllib.request, urllib.error, urllib.parse, email, re, csv, io, base64, json, datetime, pprint
-from optparse import OptionParser
 
-VERSION = "1.3.1"
+# Python 2.7 compatibility.
+if sys.version_info < (3,):
+    from email import Header as email_header
 
-ERROR_NOUSER = 67
-ERROR_PERM_DENIED = 77
-ERROR_TEMP_FAIL = 75
+else:
+    from email import header as email_header
 
-# regular expresion from https://github.com/django/django/blob/master/django/core/validators.py
-email_re = re.compile(
-    r"(^[-!#$%&'*+/=?^_`{}|~0-9A-Z]+(\.[-!#$%&'*+/=?^_`{}|~0-9A-Z]+)*"  # dot-atom
+    def unicode(value, encoding='utf-8', errors='strict'):
+        """Convert to unicode"""
+        return str(value, encoding, errors)
+
+###########################################################################
+
+# Regular expression from
+#  https://github.com/django/django/blob/master/django/core/validators.py
+
+EMAIL_RE = re.compile(
+    # dot-atom
+    r"(^[-!#$%&'*+/=?^_`{}|~0-9A-Z]+(\.[-!#$%&'*+/=?^_`{}|~0-9A-Z]+)*"
     # quoted-string, see also http://tools.ietf.org/html/rfc2822#section-3.2.5
-    r'|^"([\001-\010\013\014\016-\037!#-\[\]-\177]|\\[\001-\011\013\014\016-\177])*"'
-    r')@((?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)$)'  # domain
-    r'|\[(25[0-5]|2[0-4]\d|[0-1]?\d?\d)(\.(25[0-5]|2[0-4]\d|[0-1]?\d?\d)){3}\]$', re.IGNORECASE)
+    r'|^"([\001-\010\013\014\016-\037!#-\[\]-\177]'
+    r'|\\[\001-\011\013\014\016-\177])*"'
+    # domain part
+    r')@((?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+'
+    r'(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)$)'
+    r'|\[(25[0-5]|2[0-4]\d|[0-1]?\d?\d)'
+    r'(\.(25[0-5]|2[0-4]\d|[0-1]?\d?\d)){3}\]$', re.IGNORECASE)
 
-email_extract_re = re.compile("<(([.0-9a-z_+-=]+)@(([0-9a-z-]+\.)+[0-9a-z]{2,9}))>", re.M|re.S|re.I)
-filename_re = re.compile("filename=\"(.+)\"|filename=([^;\n\r\"\']+)", re.I|re.S)
+EMAIL_EXTRACT_RE = re.compile(
+    r"(([.0-9a-z_+-=]+)@(([0-9a-z-]+\.?)+[0-9a-z]{2,9}))", re.M | re.S | re.I)
+FILENAME_RE = re.compile(
+    r"filename=\"(.+)\"|filename=([^;\n\r\"\']+)", re.I | re.S)
 
-begin_tab_re = re.compile("^\t{1,}", re.M)
-begin_space_re = re.compile("^\s{1,}", re.M)
+BEGIN_TAB_RE = re.compile(r"^\t+", re.M)
+BEGIN_SPACE_RE = re.compile(r"^\s+", re.M)
 
-class MailJson:
-    def __init__(self, content = None):
-        self.data = {}
-        self.raw_parts = []
-        self.encoding = "utf-8" # output encoding
-        self.setContent(content)
 
-    def setEncoding(self, encoding):
+def decode_value(header_value, encoding):
+    """Decode header value"""
+    encoding = encoding.lower() if encoding else "ascii"
+    if chardet.detect(header_value)['encoding'] == encoding:
+        # Do not encode second time.
+        return header_value
+    header_value = unicode(header_value, encoding).strip().strip("\t")
+    return header_value.encode(encoding)
+
+
+class MailJson(object):
+    """Class to convert between json and mail format"""
+
+    def __init__(self, data=None, encoding=None):
         self.encoding = encoding
+        self.include_headers = ()
+        self.include_parts = True
+        self.include_attachments = True
 
-    def setContent(self, content):
-        self.content = content
+        self.json_data = {}
+        self.raw_parts = []
 
-    def _fixEncodedSubject(self, subject):
+        if data:
+            if isinstance(data, email.message.Message):
+                self.mail = data
+            elif type(data) is dict:
+                raise NotImplementedError('Conversion from JSON to mail,'
+                                          ' is not yet implemented')
+            else:
+                raise TypeError('Unknown data-type passed')
+        self.parse_mail()
+
+    @staticmethod
+    def _decode_headers(headers, encoding=None):
+        """Decode headers"""
+        if type(headers) is not list:
+            headers = [headers]
+
+        ret = []
+        for header in headers:
+            header = email_header.decode_header(header)
+            h_ret = []
+            for (value, h_encoding) in header:
+                decoded_hv = decode_value(value, h_encoding)
+                if encoding:
+                    enc = chardet.detect(value)['encoding']
+                    if not enc:
+                        enc = 'ascii'
+                    decoded_hv = decoded_hv.decode(enc).encode(encoding)
+
+                h_ret.append(decoded_hv)
+            if len(h_ret) == 1:
+                h_ret = h_ret[0]
+            ret.append(h_ret)
+        return ret
+
+    def _get_part_headers(self, part):
+        """Get headers from message part"""
+        # raw headers
+        headers = {}
+        include_headers = self.include_headers
+        for h_key in part.keys():
+            if include_headers and h_key.lower() not in include_headers:
+                continue
+            h_key = h_key.lower()
+            h_value = part.get_all(h_key)
+            if isinstance(h_value, bytes):
+                h_value = self._decode_headers(h_value, self.encoding)
+            headers[h_key] = h_value[0] if len(h_value) == 1 else h_value
+        return headers
+
+    @staticmethod
+    def _parse_date(data):
+        """Parse date"""
+        if data is None:
+            return datetime.datetime.now()
+        if type(data) is list:
+            data = str(data[0])
+        time_tuple = email.utils.parsedate_tz(data)
+        if time_tuple is None:
+            return datetime.datetime.now()
+        timestamp = email.utils.mktime_tz(time_tuple)
+        return datetime.datetime.utcfromtimestamp(timestamp)
+
+    @staticmethod
+    def _fix_encoded_subject(subject):
+        """Convert encoded multi-line subject to one line"""
         if subject is None:
             return ""
-
         subject = "%s" % subject
         subject = subject.strip()
 
@@ -58,109 +154,67 @@ class MailJson:
             return subject
 
         subject = subject.replace("\r", "")
-        subject = begin_tab_re.sub("", subject)
-        subject = begin_space_re.sub("", subject)
+        subject = BEGIN_TAB_RE.sub("", subject)
+        subject = BEGIN_SPACE_RE.sub("", subject)
         lines = subject.split("\n")
 
         new_subject = ""
-        for l in lines:
-            new_subject = "%s%s" % (new_subject, l)
-            if l[-1] == "=":
+        for line in lines:
+            new_subject = "%s%s" % (new_subject, line)
+            if line[-1] == "=":
                 new_subject = "%s\n " % new_subject
-
         return new_subject
 
-    def _extract_email(self, s):
-        ret = email_extract_re.findall(s)
-        if len(ret) < 1:
-            p = s.split(" ")
-            for e in p:
-                e = e.strip()
-                if email_re.match(e):
-                    return e
-
+    def _get_recipient_list(self, header):
+        """Get list of recipients from header by name"""
+        rcpts = self.mail.get_all(header, None)
+        if not rcpts:
             return None
+        if isinstance(rcpts, list):
+            rcpts = ",".join(rcpts)
+        # Get list of recipients
+        rcpts = rcpts.replace("\n", " ").replace("\r", " ").strip()
+        return rcpts.split(',')
+
+    def _extract_recipient(self, header):
+        """Extract recipient name and email address from header"""
+        v_list = email_header.decode_header(header)
+        if len(v_list) == 2:
+            # User name and Email already split.
+            name = str(v_list[0][0].strip())
+            address = str(v_list[1][0].strip())
+            address = address.replace("<", "").replace(">", "").strip()
         else:
-            return ret[0][0]
+            entry = v_list[0][0].strip()
+            parsed_addr = email.utils.parseaddr(entry)
 
-    def _decode_headers(self, v):
-        if type(v) is not list:
-            v = [ v ]
+            name = parsed_addr[0]
+            address = parsed_addr[1]
 
+            if address:
+                address = address.strip()
+
+        if self.encoding:
+            enc = chardet.detect(name)['encoding']
+            if not enc:
+                enc = 'ascii'
+            name = name.decode(enc).encode(self.encoding)
+        return (name, address)
+
+    def _parse_recipients(self, header):
+        """Parse header and find all recipients"""
         ret = []
-        for h in v:
-            h = email.header.decode_header(h)
-            h_ret = []
-            for h_decoded in h:
-                hv = h_decoded[0]
-                h_encoding = h_decoded[1]
-                if h_encoding is None:
-                    h_encoding = "ascii"
-                else:
-                    h_encoding = h_encoding.lower()
-
-                hv = str(hv, h_encoding).strip().strip("\t")
-
-
-                h_ret.append(hv.encode(self.encoding))
-
-            ret.append(" ".join(h_ret))
-
+        rcpt_list = self._get_recipient_list(header)
+        if not rcpt_list:
+            return []
+        for rcpt in rcpt_list:
+            (name, address) = self._extract_recipient(rcpt)
+            if address:
+                ret.append({"name": name, "email": address})
         return ret
 
-    def _parse_recipients(self, v):
-        if v is None:
-            return None
-
-        ret = []
-
-        # Sometimes a list is passed, which breaks .replace()
-        if isinstance(v, list):
-            v = ",".join(v)
-        v = v.replace("\n", " ").replace("\r", " ").strip()
-        s = io.StringIO(v)
-        c = csv.reader(s)
-        try:
-            row = next(c)
-        except StopIteration:
-            return ret
-
-        for entry in row:
-            entry = entry.strip()
-            if email_re.match(entry):
-                e = entry
-                entry = ""
-            else:
-                e = self._extract_email(entry)
-                entry = entry.replace("<%s>" % e, "")
-                entry = entry.strip()
-                if e and entry.find(e) != -1:
-                    entry = entry.replace(e, "").strip()
-
-            # If all else has failed
-            if entry and e is None:
-                e_split = entry.split(" ")
-                e = e_split[-1].replace("<", "").replace(">","")
-                entry = " ".join(e_split[:-1])
-
-            ret.append({"name": entry, "email": e})
-
-        return ret
-
-    def _parse_date(self, v):
-        if v is None:
-            return datetime.datetime.now()
-
-        tt = email.utils.parsedate_tz(v)
-
-        if tt is None:
-            return datetime.datetime.now()
-
-        timestamp = email.utils.mktime_tz(tt)
-        date = datetime.datetime.fromtimestamp(timestamp)
-        return date
-
-    def _get_content_charset(self, part, failobj = None):
+    @staticmethod
+    def _get_content_charset(part, failobj=None):
         """Return the charset parameter of the Content-Type header.
         The returned string is always coerced to lower case.  If there is no
         Content-Type header, or if that header has no charset parameter,
@@ -184,109 +238,112 @@ class MailJson:
         try:
             if isinstance(charset, str):
                 charset = charset.encode("us-ascii")
-            charset = str(charset, "us-ascii").encode("us-ascii")
+            charset = unicode(charset, "us-ascii").encode("us-ascii")
         except UnicodeError:
             return failobj
         # RFC 2046, $4.1.2 says charsets are not case sensitive
         return charset.lower()
 
-    def _get_part_headers(self, part):
-        # raw headers
+    def _parse_headers(self):
+        """ Parse mail headers (include filters)"""
+        self.include_headers = [x.lower() for x in self.include_headers]
+
+        all_headers = self._get_part_headers(self.mail)
         headers = {}
-        for k in list(part.keys()):
-            k = k.lower()
-            v = part.get_all(k)
-            if isinstance(v, bytes):
-                v = self._decode_headers(v)
-
-            if len(v) == 1:
-                headers[k] = v[0]
+        # Filter in needed headers
+        for (header, value) in all_headers.items():
+            if self.include_headers and \
+                    header.lower() not in self.include_headers:
+                continue
             else:
-                headers[k] = v
+                headers[header] = value
 
-        return headers
+        # Original headers
+        self.json_data["headers"] = headers
 
-    def parse(self):
-        self.msg = email.message_from_string(self.content)
+        # Parsed headers
+        self.json_data["parsed_headers"] = {}
+        if 'date' in headers:
+            self.json_data["parsed_headers"]["date"] = self._parse_date(
+                headers.get("date", None))
 
-        headers = self._get_part_headers(self.msg)
-        self.data["headers"] = headers
-        self.data["datetime"] = self._parse_date(headers.get("date", None)).strftime("%Y-%m-%d %H:%M:%S")
-        self.data["subject"] = self._fixEncodedSubject(headers.get("subject", None))
-        self.data["to"] = self._parse_recipients(headers.get("to", None))
-        self.data["reply-to"] = self._parse_recipients(headers.get("reply-to", None))
-        self.data["from"] = self._parse_recipients(headers.get("from", None))
-        self.data["cc"] = self._parse_recipients(headers.get("cc", None))
+        if 'subject' in headers:
+            self.json_data["parsed_headers"]["subject"] = \
+                    self._fix_encoded_subject(headers.get("subject", None))
 
+        if 'message-id' in headers:
+            m_id = headers.get("message-id", '')
+            m_id = str(m_id).replace('<', '').replace('>', '')
+            self.json_data["parsed_headers"]["message-id"] = m_id
+
+        for header in ("from", "to", "cc", "bcc"):
+            if header in headers:
+                data = self._parse_recipients(header)
+                if header == "from":
+                    # From is always only one, do not need array here.
+                    data = data[0]
+                self.json_data["parsed_headers"][header] = data
+
+    @property
+    def headers(self):
+        for x in self.json_data['headers'].keys():
+            print(f'{x.title()} = {self.json_data["headers"][x]}')
+
+    @staticmethod
+    def _parse_attachment(part):
+        """Parse message attachment"""
+        content_disposition = part.get("Content-Disposition", None)
+        found = FILENAME_RE.findall(content_disposition)
+        filename = sorted(found[0])[1] if found else "undefined"
+        return dict(filename=filename, content=base64.b64encode(part.get_payload(decode=True)),
+                    content_type=part.get_content_type())
+
+    def _parse_parts(self, part):
+        """Parse message part"""
+        try:
+            payload = part.get_payload(decode=1)
+            if self.encoding:
+                charset = self._get_content_charset(part, "utf-8").decode()
+                content = unicode(payload,
+                                  charset,
+                                  "ignore").encode(self.encoding)
+            else:
+                content = payload
+            return dict(content_type=part.get_content_type(), content=content, headers=self._get_part_headers(part))
+        except LookupError:
+            # Sometimes an encoding isn't recognized.
+            # Not much to be done.
+            pass
+
+    def parse_mail(self):
+        """Parse mail"""
+        self._parse_headers()
         attachments = []
         parts = []
-        for part in self.msg.walk():
+        for part in self.mail.walk():
             if part.is_multipart():
                 continue
 
             content_disposition = part.get("Content-Disposition", None)
             if content_disposition:
-                # we have attachment
-                r = filename_re.findall(content_disposition)
-                if r:
-                    filename = sorted(r[0])[1]
-                else:
-                    filename = "undefined"
-
-                a = { "filename": filename, "content": base64.b64encode(part.get_payload(decode = True)), "content_type": part.get_content_type() }
-                attachments.append(a)
+                # We have attachment
+                if self.include_attachments:
+                    # We are interested in parsed attachments.
+                    attachments.append(self._parse_attachment(part))
             else:
-                try:
-                    p = { "content_type": part.get_content_type(), "content": str(part.get_payload(decode = 1), self._get_content_charset(part, "utf-8"), "ignore").encode(self.encoding), "headers": self._get_part_headers(part) }
-                    parts.append(p)
-                    self.raw_parts.append(part)
-                except LookupError:
-                    # Sometimes an encoding isn't recognised - not much to be done
-                    pass
+                if self.include_parts:
+                    # We are interested in parsed parts.
+                    json_part = self._parse_parts(part)
+                    if json_part:
+                        parts.append(json_part)
+                        self.raw_parts.append(part)
 
-        self.data["attachments"] = attachments
-        self.data["parts"] = parts
-        self.data["encoding"] = self.encoding
+        if self.include_attachments:
+            self.json_data["attachments"] = attachments
+        if self.include_parts:
+            self.json_data["parts"] = parts
+        if self.encoding:
+            self.json_data["encoding"] = self.encoding
 
-        return self.get_data()
-
-    def get_data(self):
-        return self.data
-
-    def get_raw_parts(self):
-        return self.raw_parts
-
-if __name__ == "__main__":
-    usage = "usage: %prog [options]"
-    parser = OptionParser(usage)
-    parser.add_option("-u", "--url", dest = "url", action = "store", help = "the url where to post the mail data as json")
-    parser.add_option("-p", "--print", dest = "do_print", action = "store_true", help = "no json posting, just print the data")
-    parser.add_option("-d", "--dump", dest = "do_dump", action = "store_true", help = "if present print to output the url post response")
-
-    opt, args = parser.parse_args()
-
-    if not opt.url and not opt.do_print:
-        print(parser.format_help())
-        sys.exit(1)
-
-    content = sys.stdin.read()
-
-    try:
-        mj = MailJson(content)
-        mj.parse()
-        data = mj.get_data()
-
-        if opt.do_print:
-            print((json.dumps(data, encoding = data.get("encoding"))))
-        else:
-            headers = { "Content-Type": "application/json; charset=%s" % data.get("encoding"), "User-Agent": "NewsmanApp/MailToJson %s - https://github.com/Newsman/MailToJson" % VERSION }
-            req = urllib.request.Request(opt.url.replace("\n", "").replace("\r", ""), json.dumps(data, encoding = data.get("encoding")), headers)
-            resp = urllib.request.urlopen(req)
-            ret = resp.read()
-
-            print("Parsed Mail Data sent to: %s\n" % opt.url)
-            if opt.do_dump:
-                print(ret)
-    except Exception as inst:
-        print("ERR: %s" % inst)
-        sys.exit(ERROR_TEMP_FAIL)
+    def to_json(self):
+        return self.json_data
