@@ -286,8 +286,10 @@ class MailJson(object):
 
     @property
     def headers(self):
+        out = {}
         for x in self.json_data['headers'].keys():
-            print(f'{x.title()} = {self.json_data["headers"][x]}')
+            out[x.title()] = self.json_data["headers"][x]
+        return out
 
     @staticmethod
     def _parse_attachment(part):

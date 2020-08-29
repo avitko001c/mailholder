@@ -296,7 +296,7 @@ def whichall(command, path=None, verbose=0, exts=None):
     if verbose:
         return list(whichgen(command, path, verbose, exts))
     else:
-        return list(absName for absName, _ in whichgen(command, path, verbose, exts))
+        return [absName for absName, _ in whichgen(command, path, verbose, exts)]
 
 
 # mainline

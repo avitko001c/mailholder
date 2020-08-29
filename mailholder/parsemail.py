@@ -42,8 +42,9 @@ class MessagePart(object):
     def __init__(self, msg):
         self.msg = email.message_from_bytes(msg)
         self.string_file = BytesIO()
-        self.container = list()
+        self.container = []
 
+    @property
     def to_json(self):
         import json
 
@@ -185,7 +186,7 @@ class LocalMessage(MessagePart):
         if hasattr(email, "message_from_binary_file"):
             parsed_message = email.message_from_binary_file(fp)
         else:
-            parsed_message = email.message_from_file(fp)
+            parsed_message = email.message_from_bytes(fp)
         super(LocalMessage, self).__init__(parsed_message)
         self.data = str(self.msg)
         self.uid = get_counter()
@@ -227,14 +228,14 @@ class LocalServer(SMTPServer):
 
     def process_message(self, peer, mailfrom, rcpttos, data, **kwargs):
         print(type(data))
-        # print(data)
+        print(data)
         msg_data = BytesIO(data)
         flags = []
         date = email.utils.formatdate()
         msg = LocalMessage(msg_data, flags, date)
         msg.msg.add_header("X-peer:", peer[0])
-        # print(mailfrom, rcpttos)
-        # print('Downloading Attachment')
+        print(mailfrom, rcpttos)
+        print('Downloading Attachment')
         msg.getAttachment("/tmp")
         print("---------- MESSAGE FOLLOWS ----------")
         if kwargs:
@@ -242,10 +243,10 @@ class LocalServer(SMTPServer):
                 print("mail options: %s" % kwargs["mail_options"])
             if kwargs.get("rcpt_options"):
                 print("rcpt options: %s\n" % kwargs["rcpt_options"])
-        # print(msg.getBodyFile().read())
+        print(msg.getBodyFile().read())
         filename = filename_re.match
-        # print(message.items())
-        # print('------------ END MESSAGE ------------')
+        print(message.items())
+        print('------------ END MESSAGE ------------')
 
 
 class LocalHandler:
