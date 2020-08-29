@@ -64,31 +64,26 @@ def decode_value(header_value, encoding):
 class MailJson(object):
     """Class to convert between json and mail format"""
 
-    def __init__(self, data=None, encoding=None):
+    def __init__(self, data, encoding=None):
         self.encoding = encoding
         self.include_headers = ()
-        self.include_parts = True
-        self.include_attachments = True
-
+        self.rcpt_headers = ["from", "to", "cc", "bcc", 'reply-to']
         self.json_data = {}
         self.raw_parts = []
 
-        if data:
-            if isinstance(data, email.message.Message):
-                self.mail = data
-            elif type(data) is dict:
-                raise NotImplementedError('Conversion from JSON to mail,'
-                                          ' is not yet implemented')
-            else:
-                raise TypeError('Unknown data-type passed')
-        self.parse_mail()
+        if isinstance(data, email.message.Message):
+            self.mail = data
+            self.parse_mail()
+        elif type(data) is dict:
+            raise NotImplementedError('Conversion from JSON to mail is not Supported')
+        else:
+            raise TypeError('Unknown data-type passed - Must be email.message.Message')
 
     @staticmethod
     def _decode_headers(headers, encoding=None):
         """Decode headers"""
         if type(headers) is not list:
             headers = [headers]
-
         ret = []
         for header in headers:
             header = email_header.decode_header(header)
@@ -125,15 +120,19 @@ class MailJson(object):
     @staticmethod
     def _parse_date(data):
         """Parse date"""
+        import calendar
         if data is None:
-            return datetime.datetime.now()
+            return email.utils.format_datetime(datetime.datetime.now())
         if type(data) is list:
             data = str(data[0])
-        time_tuple = email.utils.parsedate_tz(data)
-        if time_tuple is None:
-            return datetime.datetime.now()
-        timestamp = email.utils.mktime_tz(time_tuple)
-        return datetime.datetime.utcfromtimestamp(timestamp)
+        time_tuple = datetime.datetime.timetuple(email.utils.parsedate_to_datetime(data))
+        year, month, day, hour, minute, second, week_day, year_day, isdst = time_tuple
+        return {'year': year,
+                'month': calendar.month_name[month],
+                'day': calendar.day_name[week_day],
+                'hour': hour,
+                'minute': minute,
+                'second': second, }
 
     @staticmethod
     def _fix_encoded_subject(subject):
@@ -209,6 +208,8 @@ class MailJson(object):
             return []
         for rcpt in rcpt_list:
             (name, address) = self._extract_recipient(rcpt)
+            if not name:
+                name = None
             if address:
                 ret.append({"name": name, "email": address})
         return ret
@@ -263,31 +264,32 @@ class MailJson(object):
 
         # Parsed headers
         self.json_data["parsed_headers"] = {}
-        if 'date' in headers:
-            self.json_data["parsed_headers"]["date"] = self._parse_date(
-                headers.get("date", None))
-
-        if 'subject' in headers:
-            self.json_data["parsed_headers"]["subject"] = \
-                    self._fix_encoded_subject(headers.get("subject", None))
-
-        if 'message-id' in headers:
-            m_id = headers.get("message-id", '')
-            m_id = str(m_id).replace('<', '').replace('>', '')
-            self.json_data["parsed_headers"]["message-id"] = m_id
-
-        for header in ("from", "to", "cc", "bcc"):
-            if header in headers:
+        for header in headers.keys():
+            if 'date' in header:
+                self.json_data["parsed_headers"]["date"] = self._parse_date(
+                    headers[header])
+            elif 'subject' in header:
+                self.json_data["parsed_headers"]["subject"] = \
+                        self._fix_encoded_subject(headers.get("subject", None))
+            elif 'message-id' in header:
+                m_id = headers.get("message-id", '')
+                m_id = str(m_id).replace('<', '').replace('>', '')
+                self.json_data["parsed_headers"]["message-id"] = m_id
+            elif header in ["from", "to", "cc", "bcc", 'reply-to']:
                 data = self._parse_recipients(header)
-                if header == "from":
+                if 'from' or 'to' in header and len(data) >= 1:
                     # From is always only one, do not need array here.
                     data = data[0]
                 self.json_data["parsed_headers"][header] = data
+            else:
+                self.json_data['parsed_headers'][header] = headers[header]
 
     @property
     def headers(self):
+        output = {}
         for x in self.json_data['headers'].keys():
-            print(f'{x.title()} = {self.json_data["headers"][x]}')
+            output[x.title()] = self.json_data["headers"][x]
+        return output
 
     @staticmethod
     def _parse_attachment(part):
@@ -318,30 +320,30 @@ class MailJson(object):
     def parse_mail(self):
         """Parse mail"""
         self._parse_headers()
-        attachments = []
-        parts = []
+        self.json_data['parts'] = {}
+        self.json_data['attachments'] = {}
+        part_count = 1
+        attachment_count = 1
         for part in self.mail.walk():
             if part.is_multipart():
                 continue
-
             content_disposition = part.get("Content-Disposition", None)
             if content_disposition:
-                # We have attachment
-                if self.include_attachments:
-                    # We are interested in parsed attachments.
-                    attachments.append(self._parse_attachment(part))
+                # We are interested in parsed attachments.
+                self.json_data['attachments'][f'file{attachment_count}'] = self._parse_attachment(part)
+                attachment_count += 1
             else:
-                if self.include_parts:
-                    # We are interested in parsed parts.
-                    json_part = self._parse_parts(part)
-                    if json_part:
-                        parts.append(json_part)
-                        self.raw_parts.append(part)
-
-        if self.include_attachments:
-            self.json_data["attachments"] = attachments
-        if self.include_parts:
-            self.json_data["parts"] = parts
+                # We are interested in parsed parts.
+                json_part = self._parse_parts(part)
+                if json_part:
+                    if json_part['content_type'] == 'text/plain':
+                        self.json_data['parts']['plaintext'] = json_part
+                    elif json_part['content_type'] == 'text/html':
+                        self.json_data['parts']['html'] = json_part
+                    else:
+                        self.json_data['parts'][f'part{part_count}'] = json_part
+                    self.raw_parts.append(part)
+                    part_count += 1
         if self.encoding:
             self.json_data["encoding"] = self.encoding
 
