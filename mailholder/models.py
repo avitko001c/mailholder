@@ -10,7 +10,7 @@ from configmanager import PlainConfig
 
 tortoise_config = {
     'connections': {
-	    'mailholder': {
+        'mailholder': {
         'engine': 'tortoise.backends.mysql',
         'credentials': {
             'host': os.environ.get('DATABASE_HOST', 'localhost'),
@@ -21,10 +21,10 @@ tortoise_config = {
         }
       }
     },
-	'apps': {
+    'apps': {
        'models': {
            'models': ['mailholder.models', 'aerich.models'],
-	       'default_connection': 'mailholder',
+           'default_connection': 'mailholder',
        }
     }
 }
@@ -48,10 +48,6 @@ class Email(BaseModel):
     html_message = TextField(null=True)
     last_updated = DateTimeField(index=True, default=datetime.datetime.now())
     message = TextField()
-    file = BinaryField(null=True)
-    filename = CharField(255, null=True)
-    mimetype = CharField(255, null=True)
-    emails =
     priority = IntField(null=True)
     scheduled_time = DateTimeField(index=True, null=True)
     status = IntField(index=True, null=True)
@@ -59,8 +55,15 @@ class Email(BaseModel):
     class Meta:
         table = 'data_email'
 
+class Attachment(BaseModel):
+    file = BinaryField(null=True)
+    filename = CharField(255, null=True)
+    mimetype = CharField(255, null=True)
+    emails: ManyToManyRelation['Email'] = ManyToManyField('models.Email', related_name='emails')
+
+
 class Log(BaseModel):
-	email_id: ManyToManyRelation['Email'] = ManyToManyField("models.Email")
+    email_id: ManyToManyRelation['Email'] = ManyToManyField("models.Email", related_name='emails')
     date = DateTimeField(index=True, default=datetime.datetime.now())
     exception_type = CharField(null=True)
     message = TextField()
